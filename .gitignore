@@ -6,3 +6,6 @@ dist/
 .env
 .env.local
 *.tsbuildinfo
+
+# Local project samples used for manual testing — never publish
+mockoon*.json

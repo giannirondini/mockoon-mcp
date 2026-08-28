@@ -2,19 +2,13 @@
  * Handlers for configuration-related tools
  */
 
-import { readMockoonConfig, getBodySize, hasTemplating } from '../../utils/config.js';
+import { readMockoonConfig, formatByteSize, hasTemplating } from '../../utils/config.js';
+import { jsonResult } from '../../utils/response.js';
 
 export async function handleReadConfig(args: { filePath: string }) {
   const { filePath } = args;
   const config = await readMockoonConfig(filePath);
-  return {
-    content: [
-      {
-        type: 'text' as const,
-        text: JSON.stringify(config, null, 2),
-      },
-    ],
-  };
+  return jsonResult(config);
 }
 
 export async function handleGetConfigSummary(args: { filePath: string }) {
@@ -24,7 +18,6 @@ export async function handleGetConfigSummary(args: { filePath: string }) {
   // Calculate response statistics
   let totalResponses = 0;
   let largestResponseSize = 0;
-  let largestResponseBody = '';
   let templatesUsed = 0;
 
   for (const route of config.routes) {
@@ -34,7 +27,6 @@ export async function handleGetConfigSummary(args: { filePath: string }) {
       const bodyLength = Buffer.byteLength(body, 'utf-8');
       if (bodyLength > largestResponseSize) {
         largestResponseSize = bodyLength;
-        largestResponseBody = body;
       }
       if (hasTemplating(body)) {
         templatesUsed++;
@@ -42,7 +34,9 @@ export async function handleGetConfigSummary(args: { filePath: string }) {
     }
   }
 
-  // Determine data complexity
+  // Rough complexity indicator meant to steer clients toward paginated /
+  // metadata-only tools: "medium" from 50 routes or 100 responses,
+  // "deep" from 100 routes, 200 responses, or a body over 10 KB.
   let dataDepth = 'shallow';
   if (config.routes.length > 50 || totalResponses > 100) {
     dataDepth = 'medium';
@@ -51,26 +45,15 @@ export async function handleGetConfigSummary(args: { filePath: string }) {
     dataDepth = 'deep';
   }
 
-  return {
-    content: [
-      {
-        type: 'text' as const,
-        text: JSON.stringify(
-          {
-            name: config.name,
-            port: config.port,
-            hostname: config.hostname,
-            routeCount: config.routes.length,
-            totalResponses,
-            largestResponse: getBodySize(largestResponseBody),
-            templatesUsed,
-            dataBucketCount: config.data?.length || 0,
-            dataDepth,
-          },
-          null,
-          2
-        ),
-      },
-    ],
-  };
+  return jsonResult({
+    name: config.name,
+    port: config.port,
+    hostname: config.hostname,
+    routeCount: config.routes.length,
+    totalResponses,
+    largestResponse: formatByteSize(largestResponseSize),
+    templatesUsed,
+    dataBucketCount: config.data?.length || 0,
+    dataDepth,
+  });
 }

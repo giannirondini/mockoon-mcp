@@ -8,12 +8,15 @@
   },
   "scripts": {
     "build": "tsc && chmod +x build/index.js",
+    "prepare": "npm run build",
     "dev": "tsx watch src/index.ts",
     "start": "node build/index.js",
     "lint": "eslint src/**/*.ts",
     "lint:fix": "eslint src/**/*.ts --fix",
     "prettier": "prettier --write .",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "tsx --test tests/*.test.ts",
+    "test:e2e": "npm run build && tsx --test tests/e2e/*.test.ts",
+    "test:all": "npm test && npm run test:e2e"
   },
   "keywords": [
     "mcp",
@@ -21,10 +24,10 @@
     "model-context-protocol",
     "api-mocking"
   ],
-  "author": "",
+  "author": "Gianni Rondini",
   "license": "MIT",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.4",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "zod": "^3.25.0"
   },
   "devDependencies": {

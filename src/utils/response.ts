@@ -1,8 +1,45 @@
 /**
- * Response utility functions
+ * Response utility functions and the shared MCP result contract.
+ *
+ * Every tool returns JSON: successes via jsonResult(), failures via
+ * errorResult() — a single error grammar ({ success: false, error, ... })
+ * regardless of which handler failed.
  */
 
 import { Response } from '../types/mockoon.js';
+
+export interface ToolResult {
+  // Index signature keeps this structurally compatible with the SDK's
+  // CallToolResult type
+  [key: string]: unknown;
+  content: { type: 'text'; text: string }[];
+  isError?: boolean;
+}
+
+/**
+ * Wrap any JSON-serializable payload as a successful tool result
+ */
+export function jsonResult(data: unknown): ToolResult {
+  return {
+    content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }],
+  };
+}
+
+/**
+ * Wrap an error message (plus optional structured context such as
+ * error_code, suggestion, available choices) as a failed tool result
+ */
+export function errorResult(error: string, extra?: Record<string, unknown>): ToolResult {
+  return {
+    content: [
+      {
+        type: 'text' as const,
+        text: JSON.stringify({ success: false, error, ...extra }, null, 2),
+      },
+    ],
+    isError: true,
+  };
+}
 
 /**
  * Helper function to find a response by ID or index

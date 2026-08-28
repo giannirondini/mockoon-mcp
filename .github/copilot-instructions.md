@@ -6,10 +6,11 @@ This is a Model Context Protocol (MCP) server for manipulating Mockoon configura
 
 ## Technology Stack
 
-- TypeScript 5.6.0
-- MCP SDK 1.0.4
-- Zod 3.25.0 for schema validation
+- TypeScript 5.6
+- MCP SDK ^1.30
+- Zod 3.25 (v4 API via `zod/v4`) — validates tool arguments at dispatch and generates the JSON Schemas advertised to clients
 - Node.js 22+
+- Tests: node:test runner via tsx (`npm test`, `tests/` directory)
 
 ## Available Tools
 
@@ -18,16 +19,16 @@ This is a Model Context Protocol (MCP) server for manipulating Mockoon configura
 2. **get_config_summary** - Get quick config overview (route count, response stats, complexity) ⚡ *Optimized - use first*
 
 ### Environment Tools
-3. **list_environments** - List all environments in a configuration
-4. **get_environment** - Get details of a specific environment
+3. **list_environments** - List the environment in a configuration (Mockoon files hold one environment; there is no environment selector parameter)
+4. **get_environment** - Get details of the environment
 
 ### Route Tools
 5. **list_routes** - List routes with pagination support (offset, limit) ⚡ *Optimized - 10 routes default*
 6. **get_route** - Get route details with metadata only (no bodies by default) ⚡ *Optimized*
 7. **find_route** - Find a route by endpoint path and method ⚡ *NEW - Preferred for direct lookup*
-8. **add_route** - Add a new route to an environment
-9. **update_route** - Update an existing route
-10. **delete_route** - Delete a route from an environment
+8. **add_route** - Add a new route (schema-complete: lowercase method, slashless endpoint, all Mockoon fields populated)
+9. **update_route** - Update an existing route (method/endpoint normalized to Mockoon conventions)
+10. **delete_route** - Delete a route from the environment
 
 ### Response Tools
 11. **get_response_details** - Get full response body, headers, rules ⚡ *Supports responseIndex*
@@ -154,9 +155,9 @@ User requests date replacement
 ### Idempotency Behavior
 
 The tool is **idempotent**:
-- Already-templated dates are automatically skipped
-- Safe to call multiple times
-- Returns statistics showing replaced vs skipped counts
+- Values already carrying Mockoon templates never match the date detector
+- Safe to call multiple times; a fully templated response reports `operationPerformed: false`
+- Returns statistics (`datesFound`, `datesReplaced`)
 - No risk of corrupting existing templates
 
 ### Common Mistakes to Avoid
@@ -175,6 +176,8 @@ The tool is **idempotent**:
 - `npm run build` - Compile TypeScript to JavaScript
 - `npm run dev` - Run in development mode with auto-reload
 - `npm start` - Run the compiled server
+- `npm test` - Run the unit test suite (node:test via tsx)
+- `npm run test:e2e` - End-to-end: drives the built server over real stdio JSON-RPC; `MOCKOON_E2E_RENDER=1` additionally serves the templated fixture with @mockoon/cli and asserts rendered dates
 - `npm run lint` - Check code quality with ESLint
 - `npm run lint:fix` - Auto-fix linting issues
 
@@ -197,11 +200,16 @@ Configure this server in Claude Desktop by adding to your MCP settings:
   "mcpServers": {
     "mockoon": {
       "command": "node",
-      "args": ["/absolute/path/to/mockoon-mcp/build/index.js"]
+      "args": ["/absolute/path/to/mockoon-mcp/build/index.js"],
+      "env": {
+        "MOCKOON_MCP_ROOT": "/path/to/your/mockoon/configs"
+      }
     }
   }
 }
 ```
+
+`MOCKOON_MCP_ROOT` is optional but recommended: when set, every read and write is confined to that directory tree.
 
 ## Project Structure
 
@@ -212,8 +220,8 @@ Configure this server in Claude Desktop by adding to your MCP settings:
   - `index.ts` - Entry point
   - `server.ts` - Server configuration
 - `/build/` - Compiled JavaScript output
+- `/tests/` - Test suite (node:test)
 - `/doc/` - Project documentation
   - `ARCHITECTURE.md` - Detailed architecture documentation
-- `/.vscode/mcp.json` - VS Code MCP configuration
 
 For detailed architecture information, see [doc/ARCHITECTURE.md](../doc/ARCHITECTURE.md).

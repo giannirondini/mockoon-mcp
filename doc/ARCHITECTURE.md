@@ -9,7 +9,10 @@ src/
 ├── types/
 │   └── mockoon.ts             # TypeScript interfaces for Mockoon data structures
 ├── utils/
-│   └── config.ts              # File I/O utilities for reading/writing configs
+│   ├── config.ts              # File I/O (validated reads, atomic writes, optional root confinement)
+│   ├── response.ts            # findResponse + shared jsonResult/errorResult result contract
+│   ├── date-template.ts       # ISO date detection and Mockoon template generation
+│   └── mockoon-defaults.ts    # Schema-complete route/response factories, method/endpoint normalization
 └── tools/
     ├── definitions.ts         # MCP tool definitions (schemas)
     └── handlers/              # Tool implementation handlers
@@ -78,10 +81,31 @@ The project uses ESLint with TypeScript support:
 ```bash
 npm run build      # Compile TypeScript
 npm run dev        # Development mode with auto-reload
+npm test           # Unit tests (node:test via tsx, tests/ directory)
+npm run test:e2e   # E2E: spawns build/index.js and drives it over real stdio JSON-RPC
+                   # (tests/e2e/; set MOCKOON_E2E_RENDER=1 to also serve the templated
+                   #  fixture with @mockoon/cli and assert the rendered dates)
+npm run test:all   # Unit + E2E
 npm run lint       # Check code quality
 npm run lint:fix   # Auto-fix linting issues
 npm run prettier   # Format code with Prettier
 ```
+
+### Input Validation
+
+Tool arguments are validated at dispatch time with zod (`src/tools/definitions.ts`).
+The zod schemas are the single source of truth: the JSON Schemas advertised to
+MCP clients are generated from them, and each handler's signature is typed
+against its schema in `server.ts`, so the three can never drift.
+
+### File Safety
+
+- Reads validate that the parsed JSON is plausibly a Mockoon environment
+  (`uuid` + `routes`) before any tool operates on it.
+- Writes go to a temp file in the same directory followed by an atomic rename,
+  so a crash mid-write can never leave a truncated config.
+- Setting the `MOCKOON_MCP_ROOT` environment variable confines all reads and
+  writes to that directory tree.
 
 ## Context Optimization Architecture
 
@@ -129,10 +153,11 @@ The `config.ts` module provides:
 - `countTemplates()`: Template expression counting
 
 The `date-template.ts` module provides:
-- `findDatePatterns()`: ISO 8601 date detection with field filtering
-- `replaceDatesWithTemplates()`: Template generation with detailed results
-- `isAlreadyTemplated()`: Template detection for idempotency
-- `matchesFieldFilter()`: Field name pattern matching
+- `isIsoDateString()`: ISO 8601 detection with real-calendar-date validation
+- `findDatePatterns()`: date detection with field filtering; paths are captured
+  as segment arrays so keys containing dots are handled correctly
+- `replaceDatesWithTemplates()`: template generation with detailed results
+- `matchesFieldFilter()`: field name pattern matching
 
 
 ## Date Template Replacement Architecture
@@ -145,16 +170,17 @@ The `replace_dates_with_templates` tool implements several advanced features:
 - Enables multi-strategy workflows where different fields need different strategies
 
 ### Idempotency
-- Automatically detects already-templated values (containing `{{...}}`)
-- Skips templated values to prevent corruption
-- Returns statistics: `replacementsCount` and `skippedCount`
-- Safe to call multiple times
+- The date detector is anchored, so values already carrying Mockoon templates
+  (`{{...}}`) can never match — repeated runs are inherently safe
+- A second run over a fully templated response reports `operationPerformed: false`
+- Returns statistics: `datesFound` and `datesReplaced`
 
 ### Validation & Error Handling
-- Pre-flight validation of parameters and JSON structure
-- Post-modification validation ensures valid JSON output
-- Automatic rollback on write failures
-- Detailed error messages with recovery suggestions
+- Arguments validated with zod before dispatch
+- Pre-flight validation of the response body's JSON structure
+- Atomic file writes — a failed write leaves the original file untouched
+- Detailed error messages with recovery suggestions, all in the shared
+  `{ success: false, error, ... }` grammar
 
 ### Multi-Strategy Workflow
 The recommended workflow for complex date replacement:

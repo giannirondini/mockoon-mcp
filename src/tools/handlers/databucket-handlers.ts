@@ -3,22 +3,11 @@
  */
 
 import { readMockoonConfig } from '../../utils/config.js';
+import { jsonResult } from '../../utils/response.js';
 
-export async function handleListDataBuckets(args: { filePath: string; environmentId?: string }) {
-  const { filePath, environmentId } = args;
+export async function handleListDataBuckets(args: { filePath: string }) {
+  const { filePath } = args;
   const config = await readMockoonConfig(filePath);
-
-  if (environmentId && config.uuid !== environmentId && config.name !== environmentId) {
-    return {
-      content: [
-        {
-          type: 'text' as const,
-          text: `Environment not found: ${environmentId}`,
-        },
-      ],
-      isError: true,
-    };
-  }
 
   const buckets = (config.data || []).map(bucket => ({
     id: bucket.id,
@@ -26,12 +15,5 @@ export async function handleListDataBuckets(args: { filePath: string; environmen
     parsed: bucket.parsed,
   }));
 
-  return {
-    content: [
-      {
-        type: 'text' as const,
-        text: JSON.stringify(buckets, null, 2),
-      },
-    ],
-  };
+  return jsonResult(buckets);
 }

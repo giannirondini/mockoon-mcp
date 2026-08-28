@@ -1,5 +1,12 @@
 /**
  * Mockoon configuration type definitions
+ *
+ * These interfaces deliberately model only the subset of the Mockoon
+ * environment schema this server reads or mutates (reference:
+ * `@mockoon/commons` environment-schema.constants.ts). Unknown fields survive
+ * edits because handlers mutate the parsed object and serialize it back
+ * whole — never rebuild a config object field-by-field from these types, or
+ * unmodeled fields would be silently dropped.
  */
 
 export interface MockoonEnvironment {
@@ -17,11 +24,15 @@ export interface MockoonEnvironment {
 
 export interface Route {
   uuid: string;
+  type?: 'http' | 'crud' | 'ws';
   method: string;
   endpoint: string;
   responses: Response[];
   enabled: boolean;
   documentation?: string;
+  responseMode?: string | null;
+  streamingMode?: string | null;
+  streamingInterval?: number;
 }
 
 export interface Response {
@@ -29,11 +40,17 @@ export interface Response {
   body: string;
   statusCode: number;
   label?: string;
+  latency?: number;
   headers?: Header[];
+  bodyType?: 'INLINE' | 'FILE' | 'DATABUCKET';
   filePath?: string;
   sendFileAsBody?: boolean;
   rules?: ResponseRule[];
+  rulesOperator?: 'OR' | 'AND';
+  disableTemplating?: boolean;
+  fallbackTo404?: boolean;
   default?: boolean;
+  crudKey?: string;
   databucketID?: string;
   callbacks?: Callback[];
 }
