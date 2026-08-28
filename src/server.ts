@@ -2,9 +2,12 @@
  * MCP Server setup and request handlers
  */
 
+import { readFileSync } from 'fs';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { tools } from './tools/definitions.js';
+import { z } from 'zod/v4';
+import { tools, toolDefinitions, ToolName } from './tools/definitions.js';
+import { errorResult, ToolResult } from './utils/response.js';
 import {
   handleReadConfig,
   handleGetConfigSummary,
@@ -22,6 +25,33 @@ import {
   handleReplaceDatesWithTemplates,
 } from './tools/handlers/index.js';
 
+const packageJson = JSON.parse(
+  readFileSync(new URL('../package.json', import.meta.url), 'utf-8')
+) as { name: string; version: string };
+
+/**
+ * One handler per tool, typed against the tool's zod schema so handler
+ * signatures cannot drift from the advertised input schema.
+ */
+const handlers: {
+  [K in ToolName]: (args: z.output<(typeof toolDefinitions)[K]['schema']>) => Promise<ToolResult>;
+} = {
+  read_mockoon_config: handleReadConfig,
+  get_config_summary: handleGetConfigSummary,
+  find_route: handleFindRoute,
+  list_environments: handleListEnvironments,
+  get_environment: handleGetEnvironment,
+  list_routes: handleListRoutes,
+  get_route: handleGetRoute,
+  add_route: handleAddRoute,
+  update_route: handleUpdateRoute,
+  delete_route: handleDeleteRoute,
+  get_response_details: handleGetResponseDetails,
+  update_response: handleUpdateResponse,
+  list_data_buckets: handleListDataBuckets,
+  replace_dates_with_templates: handleReplaceDatesWithTemplates,
+};
+
 /**
  * Create and configure the MCP server
  */
@@ -29,7 +59,7 @@ export function createServer(): Server {
   const server = new Server(
     {
       name: 'mockoon-mcp',
-      version: '1.0.0',
+      version: packageJson.version,
     },
     {
       capabilities: {
@@ -43,149 +73,32 @@ export function createServer(): Server {
     tools,
   }));
 
-  // Call tool handler
+  // Call tool handler: validate arguments against the tool's zod schema
+  // before dispatching, and surface every failure in the shared
+  // { success: false, error, ... } grammar.
   server.setRequestHandler(CallToolRequestSchema, async request => {
     const { name, arguments: args } = request.params;
 
+    if (!(name in handlers)) {
+      return errorResult(`Unknown tool: ${name}`, { error_code: 'UNKNOWN_TOOL' });
+    }
+    const toolName = name as ToolName;
+
+    const parsed = toolDefinitions[toolName].schema.safeParse(args ?? {});
+    if (!parsed.success) {
+      return errorResult('Invalid arguments', {
+        error_code: 'INVALID_ARGUMENTS',
+        issues: parsed.error.issues.map(issue => ({
+          path: issue.path.join('.'),
+          message: issue.message,
+        })),
+      });
+    }
+
     try {
-      switch (name) {
-        case 'read_mockoon_config':
-          return await handleReadConfig(args as { filePath: string });
-
-        case 'get_config_summary':
-          return await handleGetConfigSummary(args as { filePath: string });
-
-        case 'list_environments':
-          return await handleListEnvironments(args as { filePath: string });
-
-        case 'get_environment':
-          return await handleGetEnvironment(args as { filePath: string; identifier?: string });
-
-        case 'list_routes':
-          return await handleListRoutes(
-            args as {
-              filePath: string;
-              environmentId?: string;
-              offset?: number;
-              limit?: number;
-            }
-          );
-
-        case 'get_route':
-          return await handleGetRoute(
-            args as {
-              filePath: string;
-              environmentId?: string;
-              routeId: string;
-              includeBodies?: boolean;
-            }
-          );
-
-        case 'add_route':
-          return await handleAddRoute(
-            args as {
-              filePath: string;
-              environmentId?: string;
-              method: string;
-              endpoint: string;
-              responseBody: string;
-              statusCode?: number;
-              documentation?: string;
-            }
-          );
-
-        case 'update_route':
-          return await handleUpdateRoute(
-            args as {
-              filePath: string;
-              environmentId?: string;
-              routeId: string;
-              method?: string;
-              endpoint?: string;
-              enabled?: boolean;
-              documentation?: string;
-            }
-          );
-
-        case 'delete_route':
-          return await handleDeleteRoute(
-            args as {
-              filePath: string;
-              environmentId?: string;
-              routeId: string;
-            }
-          );
-
-        case 'find_route':
-          return await handleFindRoute(
-            args as {
-              filePath: string;
-              endpoint: string;
-              method?: string;
-            }
-          );
-
-        case 'update_response':
-          return await handleUpdateResponse(
-            args as {
-              filePath: string;
-              environmentId?: string;
-              routeId: string;
-              responseId?: string;
-              responseIndex?: number;
-              body?: string;
-              statusCode?: number;
-              label?: string;
-            }
-          );
-
-        case 'get_response_details':
-          return await handleGetResponseDetails(
-            args as {
-              filePath: string;
-              routeId: string;
-              responseId?: string;
-              responseIndex?: number;
-            }
-          );
-
-        case 'list_data_buckets':
-          return await handleListDataBuckets(args as { filePath: string; environmentId?: string });
-
-        case 'replace_dates_with_templates':
-          return await handleReplaceDatesWithTemplates(
-            args as {
-              filePath: string;
-              routeId: string;
-              responseId?: string;
-              responseIndex?: number;
-              strategy: 'relative' | 'offset' | 'manual';
-              variableName?: string;
-              offsetDays?: number;
-            }
-          );
-
-        default:
-          return {
-            content: [
-              {
-                type: 'text',
-                text: `Unknown tool: ${name}`,
-              },
-            ],
-            isError: true,
-          };
-      }
+      return await handlers[toolName](parsed.data as never);
     } catch (error) {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Error: ${error instanceof Error ? error.message : String(error)}`,
-          },
-        ],
-        isError: true,
-      };
+      return errorResult(error instanceof Error ? error.message : String(error));
     }
   });
 

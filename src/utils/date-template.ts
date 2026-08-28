@@ -3,35 +3,58 @@
  */
 
 export interface DatePattern {
+  /** Path as segments — the only representation used for navigation, so keys containing dots are safe */
+  segments: (string | number)[];
+  /** Human-readable dotted path, for reporting only */
   path: string;
   value: string;
   isDateTime: boolean;
-  fieldName: string; // The actual field name (last part of path)
+  /** Nearest non-index key in the path (e.g. "dates" for dates[0]) */
+  fieldName: string;
 }
 
 export type DateStrategy = 'relative' | 'offset' | 'manual';
 
 export interface ReplacementResult {
-  success: boolean;
   replacementsCount: number;
-  skippedCount: number;
   details: {
     field: string;
     path: string;
     originalValue: string;
-    newValue?: string;
-    status: 'replaced' | 'skipped';
-    reason?: string;
+    newValue: string;
   }[];
 }
 
 /**
- * Check if a string value looks like a Mockoon template
+ * ISO 8601 date/datetime pattern:
+ * - date part: yyyy-MM-dd (calendar validity checked separately)
+ * - optional time: HH:mm, HH:mm:ss, fractional seconds 1-9 digits, with
+ *   range-checked components (hours 00-23, minutes/seconds 00-59)
+ * - optional zone: Z, ±HH:mm or ±HHmm (offset hours 00-23, minutes 00-59)
+ * Anchored, so values containing template syntax ({{...}}) can never match —
+ * that anchor is what makes replacement idempotent.
  */
-export function isAlreadyTemplated(value: string): boolean {
-  // Check for common Mockoon template patterns
-  // Using a non-greedy match to find any {{...}} pattern
-  return /\{\{.*?\}\}/.test(value);
+const ISO_DATE_PATTERN =
+  /^(\d{4})-(\d{2})-(\d{2})(T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d{1,9})?)?(?:Z|[+-](?:[01]\d|2[0-3]):?[0-5]\d)?)?$/;
+
+/**
+ * Check that a string is an ISO 8601 date (optionally with time) AND a real
+ * calendar date — the pattern alone would accept values like "9999-99-99".
+ */
+export function isIsoDateString(value: string): { matches: boolean; isDateTime: boolean } {
+  const match = ISO_DATE_PATTERN.exec(value);
+  if (!match) return { matches: false, isDateTime: false };
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const roundTrip = new Date(Date.UTC(year, month - 1, day));
+  const isRealDate =
+    roundTrip.getUTCFullYear() === year &&
+    roundTrip.getUTCMonth() === month - 1 &&
+    roundTrip.getUTCDate() === day;
+
+  return { matches: isRealDate, isDateTime: match[4] !== undefined };
 }
 
 /**
@@ -69,64 +92,61 @@ export function matchesFieldFilter(
 }
 
 /**
- * Find all date patterns in an object
- * Matches ISO 8601 date strings (with or without time)
+ * Find all ISO 8601 date strings in an object.
+ * Values already containing Mockoon templates never match (the pattern is
+ * anchored), so repeated runs are idempotent.
  */
 export function findDatePatterns(
   obj: unknown,
-  path = '',
   options?: {
     fieldPattern?: string;
     fieldNames?: string[];
   }
 ): DatePattern[] {
   const dates: DatePattern[] = [];
-  const dateRegex = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d{3})?Z?)?$/;
 
-  const traverse = (current: unknown, currentPath: string): void => {
+  const traverse = (current: unknown, segments: (string | number)[]): void => {
     if (typeof current === 'string') {
-      // Skip already templated values
-      if (isAlreadyTemplated(current)) {
-        return;
-      }
+      const { matches, isDateTime } = isIsoDateString(current);
+      if (!matches) return;
 
-      if (dateRegex.test(current)) {
-        // Extract field name (last part of path)
-        const pathParts = currentPath.split('.');
-        const fieldName = pathParts[pathParts.length - 1];
+      // Nearest non-index key, so dates inside arrays keep a useful name
+      const lastKey = [...segments].reverse().find((s): s is string => typeof s === 'string');
+      const fieldName = lastKey ?? String(segments[segments.length - 1] ?? '');
+      const displayPath = segments.join('.');
 
-        // Check if this field matches the filter
-        if (matchesFieldFilter(fieldName, currentPath, options?.fieldPattern, options?.fieldNames)) {
-          dates.push({
-            path: currentPath,
-            value: current,
-            isDateTime: current.includes('T'),
-            fieldName,
-          });
-        }
+      if (matchesFieldFilter(fieldName, displayPath, options?.fieldPattern, options?.fieldNames)) {
+        dates.push({
+          segments,
+          path: displayPath,
+          value: current,
+          isDateTime,
+          fieldName,
+        });
       }
     } else if (Array.isArray(current)) {
       current.forEach((item, index) => {
-        // Use dot notation for arrays (Mockoon style: array.0.field)
-        const arrayPath = currentPath ? `${currentPath}.${index}` : `${index}`;
-        traverse(item, arrayPath);
+        traverse(item, [...segments, index]);
       });
     } else if (typeof current === 'object' && current !== null) {
       Object.keys(current).forEach(key => {
-        traverse(
-          (current as Record<string, unknown>)[key],
-          currentPath ? `${currentPath}.${key}` : key
-        );
+        traverse((current as Record<string, unknown>)[key], [...segments, key]);
       });
     }
   };
 
-  traverse(obj, path);
+  traverse(obj, []);
   return dates;
 }
 
 /**
- * Generate Mockoon template for a date based on strategy
+ * Generate a Mockoon template for a date based on strategy.
+ *
+ * Helper syntax notes (see mockoon.com/docs — templating helpers):
+ * - dateTimeShift only takes named hash arguments (date=, days=, format=)
+ *   and defaults to the current time when date= is omitted.
+ * - the `date` helper returns a RANDOM date between two bounds and must not
+ *   be used for deterministic formatting.
  */
 export function generateDateTemplate(
   dateInfo: DatePattern,
@@ -140,23 +160,24 @@ export function generateDateTemplate(
 
   switch (strategy) {
     case 'relative':
-      // Relative to request dates
+      // Relative to a date taken from the request body
       if (dateInfo.isDateTime) {
-        return `{{dateTimeShift (bodyRaw '${variableName}') days=${offsetDays}}}`;
+        return `{{dateTimeShift date=(bodyRaw '${variableName}') days=${offsetDays}}}`;
       } else {
-        return `{{date (bodyRaw '${variableName}') 'yyyy-MM-dd'}}`;
+        return `{{dateTimeShift date=(bodyRaw '${variableName}') days=${offsetDays} format='yyyy-MM-dd'}}`;
       }
 
     case 'offset':
-      // Offset from today
+      // Offset from the current time (dateTimeShift defaults to now)
       if (dateInfo.isDateTime) {
-        return `{{dateTimeShift (now) days=${offsetDays}}}`;
+        return `{{dateTimeShift days=${offsetDays}}}`;
       } else {
-        return `{{date (dateTimeShift (now) days=${offsetDays}) 'yyyy-MM-dd'}}`;
+        return `{{dateTimeShift days=${offsetDays} format='yyyy-MM-dd'}}`;
       }
 
     case 'manual':
-      // Manual template specification
+      // Custom template variable. Note: every matched field receives the
+      // same variable — callers should scope with fieldNames/fieldPattern.
       return `{{${variableName}}}`;
 
     default:
@@ -165,8 +186,9 @@ export function generateDateTemplate(
 }
 
 /**
- * Replace dates in an object with templates
- * Returns detailed information about what was replaced and what was skipped
+ * Replace dates in an object with templates.
+ * Navigation uses the segments captured during detection, so keys containing
+ * dots or numeric-looking object keys are handled correctly.
  */
 export function replaceDatesWithTemplates(
   obj: unknown,
@@ -178,44 +200,36 @@ export function replaceDatesWithTemplates(
   } = {}
 ): { templatedBody: unknown; result: ReplacementResult } {
   // Deep clone the object
-  const templatedBody = JSON.parse(JSON.stringify(obj));
+  const templatedBody: unknown = JSON.parse(JSON.stringify(obj));
   const result: ReplacementResult = {
-    success: true,
     replacementsCount: 0,
-    skippedCount: 0,
     details: [],
   };
 
   datePatterns.forEach(dateInfo => {
-    // Split by dots for Mockoon-style path (array.0.field)
-    const pathParts = dateInfo.path.split('.');
-    let current: Record<string, unknown> | unknown[] = templatedBody;
+    let current: unknown = templatedBody;
 
-    // Navigate to the parent
-    for (let i = 0; i < pathParts.length - 1; i++) {
-      const part = pathParts[i];
-      // Handle array indices as integers
-      const key = isNaN(Number(part)) ? part : parseInt(part);
-
+    // Navigate to the parent of the target value
+    for (let i = 0; i < dateInfo.segments.length - 1; i++) {
+      const segment = dateInfo.segments[i];
       if (Array.isArray(current)) {
-        current = current[key as number] as Record<string, unknown> | unknown[];
+        current = current[segment as number];
+      } else if (typeof current === 'object' && current !== null) {
+        current = (current as Record<string, unknown>)[String(segment)];
       } else {
-        current = (current as Record<string, unknown>)[key as string] as
-          | Record<string, unknown>
-          | unknown[];
+        throw new Error(`Cannot navigate to path: ${dateInfo.path}`);
       }
     }
 
-    const lastPart = pathParts[pathParts.length - 1];
-    const lastKey = isNaN(Number(lastPart)) ? lastPart : parseInt(lastPart);
-
-    // Generate and apply template (datePatterns already excludes templated values)
+    const lastSegment = dateInfo.segments[dateInfo.segments.length - 1];
     const template = generateDateTemplate(dateInfo, strategy, options);
 
     if (Array.isArray(current)) {
-      current[lastKey as number] = template;
+      current[lastSegment as number] = template;
+    } else if (typeof current === 'object' && current !== null) {
+      (current as Record<string, unknown>)[String(lastSegment)] = template;
     } else {
-      (current as Record<string, unknown>)[lastKey as string] = template;
+      throw new Error(`Cannot replace value at path: ${dateInfo.path}`);
     }
 
     result.replacementsCount++;
@@ -224,7 +238,6 @@ export function replaceDatesWithTemplates(
       path: dateInfo.path,
       originalValue: dateInfo.value,
       newValue: template,
-      status: 'replaced',
     });
   });
 

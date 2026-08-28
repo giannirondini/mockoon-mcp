@@ -1,0 +1,29 @@
+{
+  "uuid": "e2e00000-0000-4000-8000-000000000001",
+  "name": "E2E Sample",
+  "port": 3001,
+  "routes": [
+    {
+      "uuid": "e2e00000-0000-4000-8000-000000000002",
+      "method": "post",
+      "endpoint": "api/bookings",
+      "responses": [
+        {
+          "uuid": "e2e00000-0000-4000-8000-000000000003",
+          "label": "Booking Widget",
+          "statusCode": 200,
+          "body": "{\"bookings\":[{\"creation_date\":\"2025-12-22\",\"departure_timestamp\":\"2025-12-01\"}],\"meta\":{\"params\":{\"param_array\":[{\"filters\":{\"creation_date\":[{\"string\":{\"gte\":\"2024-11-04\"}}]}}]}}}",
+          "rules": [
+            {
+              "target": "body",
+              "modifier": "action",
+              "value": "Booking Widget",
+              "operator": "equals"
+            }
+          ],
+          "disableTemplating": false
+        }
+      ]
+    }
+  ]
+}

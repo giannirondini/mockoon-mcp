@@ -3,11 +3,10 @@
  */
 
 import { readMockoonConfig, writeMockoonConfig, getBodySize } from '../../utils/config.js';
-import { findResponse } from '../../utils/response.js';
+import { findResponse, jsonResult, errorResult } from '../../utils/response.js';
 
 export async function handleUpdateResponse(args: {
   filePath: string;
-  environmentId?: string;
   routeId: string;
   responseId?: string;
   responseIndex?: number;
@@ -15,49 +14,29 @@ export async function handleUpdateResponse(args: {
   statusCode?: number;
   label?: string;
 }) {
-  const { filePath, environmentId, routeId, responseId, responseIndex, body, statusCode, label } =
-    args;
+  const { filePath, routeId, responseId, responseIndex, body, statusCode, label } = args;
 
   const config = await readMockoonConfig(filePath);
-
-  if (environmentId && config.uuid !== environmentId && config.name !== environmentId) {
-    return {
-      content: [
-        {
-          type: 'text' as const,
-          text: `Environment not found: ${environmentId}`,
-        },
-      ],
-      isError: true,
-    };
-  }
 
   const route = config.routes.find(r => r.uuid === routeId);
 
   if (!route) {
-    return {
-      content: [
-        {
-          type: 'text' as const,
-          text: `Route not found: ${routeId}`,
-        },
-      ],
-      isError: true,
-    };
+    return errorResult(`Route not found: ${routeId}`, {
+      suggestion: 'Use find_route or list_routes to get a valid routeId',
+    });
   }
 
   const { response, error } = findResponse(route.responses, responseId, responseIndex);
 
   if (!response || error) {
-    return {
-      content: [
-        {
-          type: 'text' as const,
-          text: error || 'Response not found',
-        },
-      ],
-      isError: true,
-    };
+    return errorResult(error || 'Response not found', {
+      availableResponses: route.responses.map((r, index) => ({
+        index,
+        uuid: r.uuid,
+        label: r.label || 'Unnamed',
+        statusCode: r.statusCode,
+      })),
+    });
   }
 
   if (body !== undefined) response.body = body;
@@ -66,14 +45,12 @@ export async function handleUpdateResponse(args: {
 
   await writeMockoonConfig(filePath, config);
 
-  return {
-    content: [
-      {
-        type: 'text' as const,
-        text: `Response updated successfully for route: ${route.method} ${route.endpoint}`,
-      },
-    ],
-  };
+  return jsonResult({
+    success: true,
+    message: `Response updated for route: ${route.method} /${route.endpoint}`,
+    routeId: route.uuid,
+    responseId: response.uuid,
+  });
 }
 
 export async function handleGetResponseDetails(args: {
@@ -88,50 +65,32 @@ export async function handleGetResponseDetails(args: {
   const route = config.routes.find(r => r.uuid === routeId);
 
   if (!route) {
-    return {
-      content: [
-        {
-          type: 'text' as const,
-          text: `Route not found: ${routeId}`,
-        },
-      ],
-      isError: true,
-    };
+    return errorResult(`Route not found: ${routeId}`, {
+      suggestion: 'Use find_route or list_routes to get a valid routeId',
+    });
   }
 
   const { response, error } = findResponse(route.responses, responseId, responseIndex);
 
   if (!response || error) {
-    return {
-      content: [
-        {
-          type: 'text' as const,
-          text: error || 'Response not found',
-        },
-      ],
-      isError: true,
-    };
+    return errorResult(error || 'Response not found', {
+      availableResponses: route.responses.map((r, index) => ({
+        index,
+        uuid: r.uuid,
+        label: r.label || 'Unnamed',
+        statusCode: r.statusCode,
+      })),
+    });
   }
 
-  return {
-    content: [
-      {
-        type: 'text' as const,
-        text: JSON.stringify(
-          {
-            uuid: response.uuid,
-            label: response.label,
-            statusCode: response.statusCode,
-            body: response.body,
-            bodySize: getBodySize(response.body || ''),
-            headers: response.headers,
-            rules: response.rules,
-            default: response.default,
-          },
-          null,
-          2
-        ),
-      },
-    ],
-  };
+  return jsonResult({
+    uuid: response.uuid,
+    label: response.label,
+    statusCode: response.statusCode,
+    body: response.body,
+    bodySize: getBodySize(response.body || ''),
+    headers: response.headers,
+    rules: response.rules,
+    default: response.default,
+  });
 }

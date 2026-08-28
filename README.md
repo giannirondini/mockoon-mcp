@@ -40,11 +40,18 @@ Add this to your Claude Desktop configuration (`~/Library/Application Support/Cl
   "mcpServers": {
     "mockoon": {
       "command": "node",
-      "args": ["/absolute/path/to/mockoon-mcp/build/index.js"]
+      "args": ["/absolute/path/to/mockoon-mcp/build/index.js"],
+      "env": {
+        "MOCKOON_MCP_ROOT": "/path/to/your/mockoon/configs"
+      }
     }
   }
 }
 ```
+
+### Restricting Filesystem Access
+
+The server reads and writes the files an MCP client points it at. Setting the optional `MOCKOON_MCP_ROOT` environment variable confines every read and write to that directory tree — recommended, since it stops a misbehaving client (or a prompt-injected LLM) from touching unrelated files. Writes are always atomic (temp file + rename), and files that don't look like Mockoon environments are refused before any mutation.
 
 ### With Other MCP Clients
 
@@ -123,23 +130,21 @@ List all environments in a Mockoon configuration file.
 
 ### get_environment
 
-Get details of a specific environment by UUID or name.
+Get details of the environment (Mockoon files contain a single environment).
 
 **Parameters:**
 
 - `filePath` (string): Path to the Mockoon configuration file
-- `identifier` (string): Environment UUID or name
 
 ### list_routes
 
-List routes in an environment with pagination support.
+List routes in the environment with pagination support.
 
 **Parameters:**
 
 - `filePath` (string): Path to the Mockoon configuration file
-- `environmentId` (string, optional): Environment UUID or name
 - `offset` (number, optional): Number of routes to skip (default: 0)
-- `limit` (number, optional): Maximum number of routes to return (default: 10)
+- `limit` (number, optional): Maximum number of routes to return (default: 10, max: 100)
 
 **Returns:** Paginated response with `routes`, `total`, `offset`, `limit`, `hasMore` fields.
 
@@ -161,7 +166,6 @@ Get details of a specific route with optimized response metadata.
 **Parameters:**
 
 - `filePath` (string): Path to the Mockoon configuration file
-- `environmentId` (string, optional): Environment UUID or name
 - `routeId` (string): Route UUID
 - `includeBodies` (boolean, optional): Include full response bodies (default: false)
 
@@ -192,10 +196,10 @@ Find a route by endpoint path and method. Returns route UUID and response list f
 **Parameters:**
 
 - `filePath` (string): Path to the Mockoon configuration file
-- `endpoint` (string): Endpoint path to search for (e.g., "/api/users"). Supports partial matching.
-- `method` (string, optional): HTTP method (GET, POST, etc.). If omitted and only one route matches the endpoint, it is returned directly. If multiple routes with different methods match, a disambiguation prompt is returned listing available methods.
+- `endpoint` (string): Endpoint path to search for (e.g., "api/users"). Supports partial matching; leading slashes are ignored when comparing.
+- `method` (string, optional): HTTP method (GET, POST, etc.). If omitted and only one route matches the endpoint, it is returned directly. If multiple routes with different methods match, an `AMBIGUOUS_METHOD` error is returned listing the available choices.
 
-**Returns:** Route details with response list including indices, or disambiguation prompt if method is needed.
+**Returns:** Route details with response list including indices, or a structured error (`error_code`, `available_choices`, `hint`) when the method is needed.
 
 **Example Response:**
 ```json
@@ -216,12 +220,11 @@ Find a route by endpoint path and method. Returns route UUID and response list f
 
 ### add_route
 
-Add a new route to an environment.
+Add a new route to the environment. The generated route matches the full Mockoon schema: methods are stored lowercase, endpoints without a leading slash, and every schema field is populated so the file stays loadable by the Mockoon desktop app and CLI.
 
 **Parameters:**
 
 - `filePath` (string): Path to the Mockoon configuration file
-- `environmentId` (string): Environment UUID or name
 - `method` (string): HTTP method (GET, POST, PUT, DELETE, etc.)
 - `endpoint` (string): Route endpoint path
 - `responseBody` (string): Response body content
@@ -230,12 +233,11 @@ Add a new route to an environment.
 
 ### update_route
 
-Update an existing route.
+Update an existing route. Methods and endpoints are normalized to Mockoon's conventions (lowercase method, no leading slash).
 
 **Parameters:**
 
 - `filePath` (string): Path to the Mockoon configuration file
-- `environmentId` (string): Environment UUID or name
 - `routeId` (string): Route UUID
 - `method` (string, optional): HTTP method
 - `endpoint` (string, optional): Route endpoint path
@@ -244,12 +246,11 @@ Update an existing route.
 
 ### delete_route
 
-Delete a route from an environment.
+Delete a route from the environment.
 
 **Parameters:**
 
 - `filePath` (string): Path to the Mockoon configuration file
-- `environmentId` (string): Environment UUID or name
 - `routeId` (string): Route UUID
 
 ### get_response_details
@@ -272,7 +273,6 @@ Update a route response.
 **Parameters:**
 
 - `filePath` (string): Path to the Mockoon configuration file
-- `environmentId` (string, optional): Environment UUID or name
 - `routeId` (string): Route UUID
 - `responseId` (string, optional): Response UUID (alternative to responseIndex)
 - `responseIndex` (number, optional): Response index, 0-based (alternative to responseId)
@@ -291,16 +291,16 @@ Find static dates in a response body and replace them with Mockoon template synt
 - `responseId` (string, optional): Response UUID (alternative to responseIndex)
 - `responseIndex` (number, optional): Response index, 0-based (alternative to responseId)
 - `strategy` (string): Date replacement strategy - `relative` (dates relative to request), `offset` (dates offset from now), or `manual` (custom variable)
-- `variableName` (string, optional): Template variable name (default: requestDate)
-- `offsetDays` (number, optional): Days to offset dates (for offset strategy)
+- `variableName` (string, optional): Template variable name (default: requestDate; required for `relative`)
+- `offsetDays` (number, optional): Days to offset dates (for `offset` and `relative` strategies)
 - `fieldPattern` (string, optional): Regex pattern to filter which fields to process (e.g., `pnr_.*` to only process fields starting with "pnr_")
 - `fieldNames` (array of strings, optional): Explicit list of field names to process (e.g., `["departure_date", "arrival_date"]`)
 
 **Strategies:**
 
-- **relative**: Generates templates like `{{dateTimeShift (bodyRaw 'requestDate') days=0}}` - dates relative to request body values
-- **offset**: Generates templates like `{{date (dateTimeShift (now) days=5) 'yyyy-MM-dd'}}` - dates offset from current time
-- **manual**: Generates templates like `{{customVariable}}` - custom template variable names
+- **relative**: Generates templates like `{{dateTimeShift date=(bodyRaw 'params.search_date') days=0}}` (date-only fields add `format='yyyy-MM-dd'`) - dates relative to request body values
+- **offset**: Generates templates like `{{dateTimeShift days=5}}` (date-only fields add `format='yyyy-MM-dd'`) - dates offset from current time
+- **manual**: Generates templates like `{{customVariable}}` - note that **every matched field receives the same variable**, so always scope manual calls with `fieldPattern` or `fieldNames`
 
 **Field Targeting:**
 
@@ -480,22 +480,25 @@ The `responseIndex` parameter allows you to target responses by their position (
 
 ### Idempotency and Skipping Already-Templated Dates
 
-The tool is **idempotent** - it automatically detects and skips dates that have already been replaced with templates. This means:
+The tool is **idempotent** - values already containing Mockoon templates never match the date detector, so:
 
 - ✅ You can safely call the tool multiple times
-- ✅ Already-templated fields are reported as "skipped"
-- ✅ The tool returns statistics showing replaced vs skipped counts
+- ✅ A second run over a fully templated response reports `operationPerformed: false`
 - ✅ No risk of corrupting existing templates
 
-**Example output with skipped dates:**
+**Example output:**
 ```json
 {
   "success": true,
-  "replacementsCount": 3,
-  "skippedCount": 2,
+  "operationPerformed": true,
+  "statistics": { "datesFound": 3, "datesReplaced": 3 },
   "details": [
-    { "field": "order_date", "status": "replaced", "template": "{{date ...}}" },
-    { "field": "created_at", "status": "skipped", "reason": "already templated" }
+    {
+      "field": "order_date",
+      "path": "order_date",
+      "originalValue": "2024-01-15",
+      "template": "{{dateTimeShift days=0 format='yyyy-MM-dd'}}"
+    }
   ]
 }
 ```
@@ -510,7 +513,7 @@ update_response({
   filePath: "config.json",
   routeId: "route-123",
   responseIndex: 0,
-  body: '{"date": "{{date (now) \'yyyy-MM-dd\'}}"}' // Manual JSON editing
+  body: '{"date": "{{now \'yyyy-MM-dd\'}}"}' // Manual JSON editing
 })
 
 // ✅ CORRECT - Always use the specialized tool
@@ -527,7 +530,7 @@ replace_dates_with_templates({
 
 | Issue | Solution |
 |-------|----------|
-| "No date patterns found" | Check that the response body contains valid ISO 8601 dates (e.g., `2024-01-15` or `2024-01-15T10:30:00Z`) |
+| "No date patterns found" | Check that the response body contains valid ISO 8601 dates (e.g., `2024-01-15`, `2024-01-15T10:30`, `2024-01-15T10:30:00Z`, fractional seconds and `±HH:mm` offsets are supported) |
 | Field not being replaced | Use `fieldPattern` with a regex that matches the field name, or specify exact names with `fieldNames` |
 | Wrong dates replaced | Be more specific with `fieldPattern` - use anchors like `^pnr_` for "starts with" |
 | Template syntax errors | Verify the `variableName` matches the actual request body structure |
@@ -576,6 +579,18 @@ npm run build
 
 # Run in development mode with auto-reload
 npm run dev
+
+# Run the unit test suite
+npm test
+
+# Run the end-to-end suite (spawns the built server over stdio)
+npm run test:e2e
+
+# Also verify rendering against the real Mockoon CLI (downloads @mockoon/cli, binds a port)
+MOCKOON_E2E_RENDER=1 npm run test:e2e
+
+# Everything
+npm run test:all
 ```
 
 ## Example Usage

@@ -1,7 +1,7 @@
 ---
 description: 'This agent is specialized in creating and managing mock APIs using Mockoon within VS Code.'
 tools: ['execute/runInTerminal', 'edit', 'mockoon-local/*', 'agent']
-model: Claude Haiku 4.5 (copilot)
+model: GPT-5.6 Luna (copilot)
 handoffs:
   - label: Finalize the changes and validate the mock APIs
     agent: Mockoon
@@ -109,9 +109,9 @@ User requests date replacement
 ### Idempotency Behavior
 
 The tool is **idempotent**:
-- Already-templated dates are automatically skipped
-- Safe to call multiple times
-- Returns statistics showing replaced vs skipped counts
+- Values already carrying Mockoon templates never match the date detector
+- Safe to call multiple times; a fully templated response reports `operationPerformed: false`
+- Returns statistics (`datesFound`, `datesReplaced`)
 - No risk of corrupting existing templates
 
 ### Common Mistakes to Avoid

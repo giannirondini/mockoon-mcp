@@ -21,8 +21,8 @@ This document provides comprehensive examples for using the `replace_dates_with_
 
 | Strategy | Use Case | Template Generated |
 |----------|----------|-------------------|
-| `offset` | Dates relative to current time | `{{date (dateTimeShift (now) days=N) 'yyyy-MM-dd'}}` |
-| `relative` | Dates relative to request parameters | `{{dateTimeShift (bodyRaw 'variableName') days=N}}` |
+| `offset` | Dates relative to current time | `{{dateTimeShift days=N format='yyyy-MM-dd'}}` |
+| `relative` | Dates relative to request parameters | `{{dateTimeShift date=(bodyRaw 'variableName') days=N}}` |
 | `manual` | Custom template variable | `{{variableName}}` |
 
 ### Using responseIndex vs responseId
@@ -122,7 +122,7 @@ replace_dates_with_templates({
   offsetDays: -7,
   fieldPattern: "pnr_creation_date"
 })
-// Result: "pnr_creation_date": "{{date (dateTimeShift (now) days=-7) 'yyyy-MM-dd'}}"
+// Result: "pnr_creation_date": "{{dateTimeShift days=-7 format='yyyy-MM-dd'}}"
 
 // Step 3: Replace departure_timestamp_outbound with relative strategy
 replace_dates_with_templates({
@@ -152,19 +152,19 @@ replace_dates_with_templates({
 {
   "booking": {
     "pnr": "ABC123",
-    "pnr_creation_date": "{{date (dateTimeShift (now) days=-7) 'yyyy-MM-dd'}}",
+    "pnr_creation_date": "{{dateTimeShift days=-7 format='yyyy-MM-dd'}}",
     "passenger": {
       "name": "John Doe"
     },
     "flights": [
       {
         "direction": "outbound",
-        "departure_timestamp_outbound": "{{dateTimeShift (bodyRaw 'params.search_date') days=0}}",
+        "departure_timestamp_outbound": "{{dateTimeShift date=(bodyRaw 'params.search_date') days=0}}",
         "arrival_timestamp": "2024-02-20T12:45:00Z"
       },
       {
         "direction": "inbound",
-        "departure_timestamp_inbound": "{{dateTimeShift (bodyRaw 'params.search_date') days=7}}",
+        "departure_timestamp_inbound": "{{dateTimeShift date=(bodyRaw 'params.search_date') days=7}}",
         "arrival_timestamp": "2024-02-27T18:15:00Z"
       }
     ]
@@ -450,7 +450,7 @@ replace_dates_with_templates({
   routeId: "itinerary-route",
   responseIndex: 0,
   strategy: "manual",
-  variableName: "date (dateTimeShift (now) days=14) 'yyyy-MM-dd'",
+  variableName: "dateTimeShift days=14 format='yyyy-MM-dd'",
   fieldPattern: "legs.0.departure_date"  // Target first leg specifically
 })
 ```
@@ -534,7 +534,7 @@ update_response({
   routeId: "abc-123",
   responseIndex: 0,
   body: JSON.stringify({
-    "date": "{{date (now) 'yyyy-MM-dd'}}"
+    "date": "{{now 'yyyy-MM-dd'}}"
   })
 })
 
@@ -630,8 +630,8 @@ After performing date replacements, verify:
 2. ✅ **Template syntax**: Templates use correct Mockoon syntax
 3. ✅ **Field accuracy**: Correct fields were replaced
 4. ✅ **Strategy applied**: Templates match requested strategy
-5. ✅ **Idempotency**: Previously templated dates were skipped
-6. ✅ **Response statistics**: Check `replacementsCount` and `skippedCount`
+5. ✅ **Idempotency**: Previously templated dates never match, so nothing is double-templated
+6. ✅ **Response statistics**: Check `datesFound` and `datesReplaced`
 
 ---
 
